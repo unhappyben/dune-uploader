@@ -1,0 +1,30 @@
+name: Sync FX Rates to Dune
+
+on:
+  schedule:
+    - cron: "0 6 * * *"  # Every day at 06:00 UTC
+  workflow_dispatch:     # Manual trigger from GitHub UI
+
+jobs:
+  sync-dune-fx:
+    runs-on: ubuntu-latest
+
+    env:
+      DUNE_API_KEY: ${{ secrets.DUNE_API_KEY }}
+
+    steps:
+      - name: 📥 Checkout repo
+        uses: actions/checkout@v3
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas yfinance requests
+
+      - name: 🚀 Run FX sync script
+        run: python dune_fx_sync.py
