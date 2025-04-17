@@ -14,7 +14,8 @@ CONFIG = {
         'SGD', 'THB', 'TRY', 'USD', 'VND', 'ZAR'
     ],
     "table_name": "fx_rates",
-    "namespace": "unhappyben"
+    "namespace": "unhappyben",
+    "api_key": os.environ["DUNE_API_KEY"]
 }
 
 # Set date range
