@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import time
 import requests
 import io
+import os
+
 
 # Configuration
 CONFIG = {
