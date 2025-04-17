@@ -21,7 +21,7 @@ CONFIG = {
 }
 
 # Set date range
-yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+yesterday = (datetime.now().strftime("%Y-%m-%d")) #- timedelta(days=1)).strftime("%Y-%m-%d")
 CONFIG["start_date"] = "2025-01-01"
 CONFIG["end_date"] = yesterday
 
