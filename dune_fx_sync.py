@@ -1,3 +1,5 @@
+## yahoo finance python script -- moving to api based from trader made
+
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
