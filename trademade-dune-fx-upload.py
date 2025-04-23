@@ -4,6 +4,7 @@ import pandas as pd
 import requests
 import io
 from datetime import datetime
+import os
 
 # === CONFIG ===
 TRADERMADE_API_KEY = os.getenv("TRADERMADE_API_KEY")
