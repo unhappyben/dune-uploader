@@ -25,4 +25,4 @@ jobs:
         run: pip install tradermade pandas requests
 
       - name: Run daily FX updater
-        run: python daily_fx_update.py
+        run: python trademade-dune-fx-upload.py
