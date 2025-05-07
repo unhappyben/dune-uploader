@@ -2,8 +2,9 @@ import tradermade as tm
 import pandas as pd
 import requests
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
+
 
 # === CONFIG ===
 TRADERMADE_API_KEY = os.getenv("TRADERMADE_API_KEY")
@@ -76,6 +77,51 @@ rows.append({
 
 # Create final dataframe with checks
 df_final = pd.DataFrame(rows)
+
+
+def backfill_weekend_rates(df):
+    df["date"] = pd.to_datetime(df["date"])
+    currencies = df["currency"].unique()
+    backfilled_rows = []
+
+    for currency in currencies:
+        currency_df = df[df["currency"] == currency].sort_values("date").reset_index(drop=True)
+
+        for i in range(1, len(currency_df) - 1):
+            prev_row = currency_df.iloc[i - 1]
+            curr_row = currency_df.iloc[i]
+            next_row = currency_df.iloc[i + 1]
+
+            # Fill Saturday (Fri to Sun gap)
+            if (curr_row["date"] - prev_row["date"]).days == 2 and prev_row["date"].weekday() == 4 and curr_row["date"].weekday() == 6:
+                saturday = prev_row["date"] + timedelta(days=1)
+                fx_rate = round((2/3) * prev_row["fx_rate"] + (1/3) * curr_row["fx_rate"], 8)
+                inverse_fx = round(1 / fx_rate, 8)
+                backfilled_rows.append({
+                    "date": saturday.strftime("%Y-%m-%d"),
+                    "currency": currency,
+                    "fx_rate": fx_rate,
+                    "inverse_fx_rate": inverse_fx
+                })
+
+            # Fill Sunday (gap before Monday, with Friday behind)
+            if (next_row["date"] - curr_row["date"]).days == 2 and curr_row["date"].weekday() == 0 and prev_row["date"].weekday() == 4:
+                sunday = curr_row["date"] - timedelta(days=1)
+                fx_rate = round((1/3) * prev_row["fx_rate"] + (2/3) * curr_row["fx_rate"], 8)
+                inverse_fx = round(1 / fx_rate, 8)
+                backfilled_rows.append({
+                    "date": sunday.strftime("%Y-%m-%d"),
+                    "currency": currency,
+                    "fx_rate": fx_rate,
+                    "inverse_fx_rate": inverse_fx
+                })
+
+    df_backfilled = pd.concat([df, pd.DataFrame(backfilled_rows)], ignore_index=True)
+    df_backfilled = df_backfilled.sort_values(by=["currency", "date"]).reset_index(drop=True)
+    return df_backfilled
+
+# Apply backfilling
+df_final = backfill_weekend_rates(df_final)
 
 # Safety check - remove any NaN or zero values
 df_final = df_final.dropna(subset=["fx_rate", "inverse_fx_rate"])
