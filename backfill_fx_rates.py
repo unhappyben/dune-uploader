@@ -68,12 +68,6 @@ def build_backfill_rows(day_name, date_str, weights):
             "fx_rate": fx,
             "inverse_fx_rate": inverse_fx
         })
-    rows.append({
-        "date": date_str,
-        "currency": BASE,
-        "fx_rate": 1.0,
-        "inverse_fx_rate": 1.0
-    })
     print(f"✅ Built {day_name} rows")
     return rows
 
