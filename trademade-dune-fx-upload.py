@@ -1,13 +1,11 @@
-import tradermade as tm
 import pandas as pd
 import requests
 import io
 from datetime import datetime, timedelta
 import os
 
-
 # === CONFIG ===
-TRADERMADE_API_KEY = os.getenv("TRADERMADE_API_KEY")
+EXCHANGE_RATE_API_KEY = os.getenv("EXCHANGE_RATE_API_KEY")
 DUNE_API_KEY = os.getenv("DUNE_API_KEY")
 BASE = "USD"
 CURRENCIES = [
@@ -18,67 +16,44 @@ CURRENCIES = [
 TABLE_NAME = "fx_rates"
 NAMESPACE = "unhappyben"
 
-tm.set_rest_api_key(TRADERMADE_API_KEY)
-
-# === FETCH DATA ===
-today = datetime.today().strftime("%Y-%m-%d")
-# Create pairlist excluding BASE currency
-pairlist = ",".join([f"{c}{BASE}" for c in CURRENCIES if c != BASE])
+# === FETCH TODAY'S FX DATA ===
+today_obj = datetime.today()
+today = today_obj.strftime("%Y-%m-%d")
+url = f"https://v6.exchangerate-api.com/v6/{EXCHANGE_RATE_API_KEY}/history/{BASE}/{today_obj.year}/{today_obj.month:02}/{today_obj.day:02}"
 
 try:
-    df = tm.historical(currency=pairlist, date=today, interval="daily", fields=["close"])
+    response = requests.get(url)
+    data = response.json()
+
+    if data.get("result") != "success":
+        raise ValueError(f"API returned error: {data.get('error-type', 'unknown')}")
+
+    rates = data.get("conversion_rates", {})
     print(f"✅ Successfully fetched data for {today}")
 except Exception as e:
-    print("❌ TraderMade fetch error:", e)
+    print("❌ ExchangeRate-API fetch error:", e)
     exit(1)
 
+# === TRANSFORM TO ROWS ===
 rows = []
-for i, row in df.iterrows():
-    pair = row["instrument"]
-    base_cur = pair[:3]
-    quote_cur = pair[3:]
-    
-    # Get the FX rate
-    if quote_cur == BASE:
-        fx = row["close"]
-    else:
-        fx = 1 / row["close"]
-    
-    # Debug print
-    print(f"Processing {pair}: FX rate = {fx}")
-    
-    # Skip zero or invalid values
-    if fx == 0 or pd.isna(fx):
-        print(f"⚠️ Skipping {pair} due to zero or invalid rate")
+for currency in CURRENCIES:
+    fx = rates.get(currency)
+    if fx is None or fx == 0:
+        print(f"⚠️ Skipping {currency} due to missing or zero value")
         continue
-    
-    # Calculate inverse with safety check
-    inverse_fx = 0
-    try:
-        inverse_fx = round(1 / fx, 8)
-    except ZeroDivisionError:
-        print(f"⚠️ Cannot calculate inverse for {pair}, FX rate is zero")
-        continue
-    
+
+    inverse_fx = round(1 / fx, 8)
     rows.append({
         "date": today,
-        "currency": base_cur,
+        "currency": currency,
         "fx_rate": round(fx, 8),
         "inverse_fx_rate": inverse_fx
     })
 
-# Add base (USD = 1)
-rows.append({
-    "date": today,
-    "currency": BASE,
-    "fx_rate": 1.0,
-    "inverse_fx_rate": 1.0
-})
-
-# Create final dataframe with checks
+# === BUILD INITIAL DATAFRAME ===
 df_final = pd.DataFrame(rows)
 
-
+# === BACKFILL WEEKEND RATES ===
 def backfill_weekend_rates(df):
     df["date"] = pd.to_datetime(df["date"])
     currencies = df["currency"].unique()
@@ -92,7 +67,7 @@ def backfill_weekend_rates(df):
             curr_row = currency_df.iloc[i]
             next_row = currency_df.iloc[i + 1]
 
-            # Fill Saturday (Fri to Sun gap)
+            # Fill Saturday (Friday to Sunday gap)
             if (curr_row["date"] - prev_row["date"]).days == 2 and prev_row["date"].weekday() == 4 and curr_row["date"].weekday() == 6:
                 saturday = prev_row["date"] + timedelta(days=1)
                 fx_rate = round((2/3) * prev_row["fx_rate"] + (1/3) * curr_row["fx_rate"], 8)
@@ -104,7 +79,7 @@ def backfill_weekend_rates(df):
                     "inverse_fx_rate": inverse_fx
                 })
 
-            # Fill Sunday (gap before Monday, with Friday behind)
+            # Fill Sunday (before Monday, with Friday behind)
             if (next_row["date"] - curr_row["date"]).days == 2 and curr_row["date"].weekday() == 0 and prev_row["date"].weekday() == 4:
                 sunday = curr_row["date"] - timedelta(days=1)
                 fx_rate = round((1/3) * prev_row["fx_rate"] + (2/3) * curr_row["fx_rate"], 8)
@@ -120,10 +95,9 @@ def backfill_weekend_rates(df):
     df_backfilled = df_backfilled.sort_values(by=["currency", "date"]).reset_index(drop=True)
     return df_backfilled
 
-# Apply backfilling
 df_final = backfill_weekend_rates(df_final)
 
-# Safety check - remove any NaN or zero values
+# Final clean-up
 df_final = df_final.dropna(subset=["fx_rate", "inverse_fx_rate"])
 df_final = df_final[(df_final["fx_rate"] != 0) & (df_final["inverse_fx_rate"] != 0)]
 
@@ -144,12 +118,7 @@ headers_csv = {
 }
 
 try:
-    resp = requests.post(
-        upload_url, 
-        headers=headers_csv, 
-        data=csv_buffer.getvalue().encode("utf-8")
-    )
-    
+    resp = requests.post(upload_url, headers=headers_csv, data=csv_buffer.getvalue().encode("utf-8"))
     if resp.status_code == 200:
         print("✅ Upload successful!")
     else:
