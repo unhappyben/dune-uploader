@@ -1,4 +1,3 @@
-import tradermade as tm
 import pandas as pd
 import requests
 import io
@@ -6,7 +5,7 @@ from datetime import datetime, timedelta
 import os
 
 # === CONFIG ===
-TRADERMADE_API_KEY = os.getenv("TRADERMADE_API_KEY")
+EXCHANGE_RATE_API_KEY = os.getenv("EXCHANGE_RATE_API_KEY")
 DUNE_API_KEY = os.getenv("DUNE_API_KEY")
 BASE = "USD"
 CURRENCIES = [
@@ -32,84 +31,54 @@ date_strs = {
     "sunday": (friday + timedelta(days=2)).strftime("%Y-%m-%d"),
 }
 
-# === Fetch Friday and Monday FX Data ===
-tm.set_rest_api_key(TRADERMADE_API_KEY)
-pairlist = ",".join([f"{c}{BASE}" for c in CURRENCIES if c != BASE])
-
-def fetch_fx(date_str):
+# === Fetch Historical FX Data from ExchangeRate-API ===
+def fetch_fx(date_obj, label):
+    url = f"https://v6.exchangerate-api.com/v6/{EXCHANGE_RATE_API_KEY}/history/{BASE}/{date_obj.year}/{date_obj.month:02}/{date_obj.day:02}"
     try:
-        df = tm.historical(currency=pairlist, date=date_str, interval="daily", fields=["close"])
-        print(f"✅ Fetched data for {date_str}")
-        return df
+        resp = requests.get(url)
+        data = resp.json()
+        if data.get("result") != "success":
+            raise ValueError(data.get("error-type", "Unknown error"))
+        rates = data["conversion_rates"]
+        print(f"✅ Fetched {label} FX rates")
+        return {cur: rates[cur] for cur in CURRENCIES if cur in rates}
     except Exception as e:
-        print(f"❌ Error fetching {date_str}: {e}")
+        print(f"❌ Error fetching {label} rates:", e)
         return None
 
-df_friday = fetch_fx(date_strs["friday"])
-df_monday = fetch_fx(date_strs["monday"])
+fri_rates = fetch_fx(friday, "Friday")
+mon_rates = fetch_fx(monday, "Monday")
 
-if df_friday is None or df_monday is None:
+if fri_rates is None or mon_rates is None:
     print("❌ Cannot proceed without both Friday and Monday data.")
     exit(1)
 
-# === Build FX Row Helper ===
-def extract_fx(df, weight, label):
-    rows = {}
-    for _, row in df.iterrows():
-        pair = row.get("instrument")
-        if not isinstance(pair, str) or len(pair) < 6:
+# === Generate Weighted Interpolated FX Data ===
+def build_backfill_rows(day_name, date_str, weights):
+    rows = []
+    for cur in CURRENCIES:
+        if cur not in fri_rates or cur not in mon_rates:
+            print(f"⚠️ Skipping {cur}, missing Friday or Monday rate.")
             continue
-        base_cur = pair[:3]
-        quote_cur = pair[3:]
-        rate = row.get("close")
-        if pd.isna(rate) or rate == 0:
-            continue
-        fx = rate if quote_cur == BASE else 1 / rate
-        rows[base_cur] = weight * fx
-    print(f"✅ Processed {label} with {len(rows)} entries")
-    return rows
-
-# === Weighted Average ===
-fri_rates = extract_fx(df_friday, 1, "Friday")
-mon_rates = extract_fx(df_monday, 1, "Monday")
-
-saturday_rows = []
-sunday_rows = []
-
-for cur in CURRENCIES:
-    if cur not in fri_rates or cur not in mon_rates:
-        print(f"⚠️ Skipping {cur}, missing Friday or Monday rate.")
-        continue
-
-    sat_fx = round((2/3) * fri_rates[cur] + (1/3) * mon_rates[cur], 8)
-    sun_fx = round((1/3) * fri_rates[cur] + (2/3) * mon_rates[cur], 8)
-
-    saturday_rows.append({
-        "date": date_strs["saturday"],
-        "currency": cur,
-        "fx_rate": sat_fx,
-        "inverse_fx_rate": round(1 / sat_fx, 8)
-    })
-
-    sunday_rows.append({
-        "date": date_strs["sunday"],
-        "currency": cur,
-        "fx_rate": sun_fx,
-        "inverse_fx_rate": round(1 / sun_fx, 8)
-    })
-
-# Add USD base row
-for date_label in ["saturday", "sunday"]:
-    row = {
-        "date": date_strs[date_label],
+        fx = round(weights[0] * fri_rates[cur] + weights[1] * mon_rates[cur], 8)
+        inverse_fx = round(1 / fx, 8) if fx != 0 else 0
+        rows.append({
+            "date": date_str,
+            "currency": cur,
+            "fx_rate": fx,
+            "inverse_fx_rate": inverse_fx
+        })
+    rows.append({
+        "date": date_str,
         "currency": BASE,
         "fx_rate": 1.0,
         "inverse_fx_rate": 1.0
-    }
-    if date_label == "saturday":
-        saturday_rows.append(row)
-    else:
-        sunday_rows.append(row)
+    })
+    print(f"✅ Built {day_name} rows")
+    return rows
+
+saturday_rows = build_backfill_rows("Saturday", date_strs["saturday"], weights=(2/3, 1/3))
+sunday_rows = build_backfill_rows("Sunday", date_strs["sunday"], weights=(1/3, 2/3))
 
 # === Combine and Upload ===
 df_backfill = pd.DataFrame(saturday_rows + sunday_rows)
