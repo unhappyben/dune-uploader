@@ -46,8 +46,8 @@ for currency in CURRENCIES:
     rows.append({
         "date": today,
         "currency": currency,
-        "fx_rate": round(fx, 8),
-        "inverse_fx_rate": inverse_fx
+        "fx_rate": round(1 / fx, 8),          # e.g. 0.0069 (USD per JPY)
+        "inverse_fx_rate": round(fx, 8)            # e.g. 145.12 (JPY per USD)
     })
 
 # === BUILD INITIAL DATAFRAME ===
