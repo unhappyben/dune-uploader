@@ -60,14 +60,16 @@ def build_backfill_rows(day_name, date_str, weights):
         if cur not in fri_rates or cur not in mon_rates:
             print(f"⚠️ Skipping {cur}, missing Friday or Monday rate.")
             continue
-        fx = round(weights[0] * fri_rates[cur] + weights[1] * mon_rates[cur], 8)
-        inverse_fx = round(1 / fx, 8) if fx != 0 else 0
+        inverse_fx = round(weights[0] * fri_rates[cur] + weights[1] * mon_rates[cur], 8)  # e.g. 145.12 JPY/USD
+        fx = round(1 / inverse_fx, 8) if inverse_fx != 0 else 0                           # e.g. 0.00691 USD/JPY
+
         rows.append({
             "date": date_str,
             "currency": cur,
-            "fx_rate": fx,
-            "inverse_fx_rate": inverse_fx
+            "fx_rate": fx,                      # USD per foreign currency
+            "inverse_fx_rate": inverse_fx       # foreign per USD
         })
+
     print(f"✅ Built {day_name} rows")
     return rows
 
