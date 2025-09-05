@@ -17,7 +17,7 @@ TABLE_NAME = "fx_rates"
 NAMESPACE = "unhappyben"
 
 # === FETCH TODAY'S FX DATA ===
-target_date = datetime(2025, 9, 4)  
+today_obj = datetime(2025, 9, 4)  
 ##today_obj = datetime.today()
 today = today_obj.strftime("%Y-%m-%d")
 url = f"https://v6.exchangerate-api.com/v6/{EXCHANGE_RATE_API_KEY}/history/{BASE}/{today_obj.year}/{today_obj.month:02}/{today_obj.day:02}"
