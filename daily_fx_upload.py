@@ -9,7 +9,7 @@ EXCHANGE_RATE_API_KEY = os.getenv("EXCHANGE_RATE_API_KEY")
 DUNE_API_KEY = os.getenv("DUNE_API_KEY")
 BASE = "USD"
 CURRENCIES = [
-    'AED', 'AUD', 'CAD', 'CHF', 'CNY', 'EUR', 'GBP', 'HKD', 'IDR',
+    'AED', 'ARS', 'AUD', 'CAD', 'CHF', 'CNY', 'EUR', 'GBP', 'HKD', 'IDR',
     'ILS', 'JPY', 'KES', 'MXN', 'MYR', 'NZD', 'PLN', 'SAR',
     'SGD', 'THB', 'TRY', 'USD', 'VND', 'ZAR'
 ]
