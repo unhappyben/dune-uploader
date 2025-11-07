@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Daily Relay → Dune loader (relay_requests ONLY, with chain name join)
+Daily Relay → Dune loader (relay_requests ONLY, hard-coded chain names)
 - Computes "yesterday" in Europe/Amsterdam unless a --date YYYY-MM-DD is provided
 - Fetches Relay requests for REFERRER
-- Flattens to the agreed schema (incl. origin/dest chain names)
+- Flattens to the agreed schema (with in/out chain names from hard-coded map)
 - Filters rows to the given date (local day window)
 - Inserts CSV into Dune table via CSV endpoint
 
@@ -47,7 +47,38 @@ DUNE_INSERT_URL = f"https://api.dune.com/api/v1/table/{DUNE_NAMESPACE}/{DUNE_TAB
 JSON_HEADERS = {"X-DUNE-API-KEY": DUNE_API_KEY, "Content-Type": "application/json"}
 CSV_HEADERS  = {"X-DUNE-API-KEY": DUNE_API_KEY, "Content-Type": "text/csv"}
 
-CHAINS_JSON_URL = "https://chainid.network/chains.json"
+# -------------------------
+# HARD-CODED chain map (from your list)
+# -------------------------
+CHAIN_MAP = {
+    999:        "Hyperliquid HyperEVM",      # note: some registries use 999 for Wanchain Testnet
+    146:        "Sonic Mainnet",
+    5000:       "Mantle Mainnet",
+    8253038:    "Bitcoin",                   # Relay internal ID
+    9745:       "Plasma Mainnet",
+    56:         "BNB Chain (BSC)",
+    43114:      "Avalanche C-Chain",
+    1337:       "Localhost / Dev",
+    480:        "World Chain Mainnet",
+    42220:      "Celo Mainnet",
+    33139:      "ApeChain Mainnet",
+    792703809:  "Solana",                    # Relay internal ID
+    1:          "Ethereum Mainnet",
+    137:        "Polygon PoS",
+    534352:     "Scroll Mainnet",
+    42161:      "Arbitrum One",
+    8453:       "Base Mainnet",
+    100:        "Gnosis Chain (xDai)",
+    747:        "Flow EVM Mainnet",
+}
+
+def chain_name(cid):
+    if cid is None or (isinstance(cid, float) and pd.isna(cid)):
+        return None
+    try:
+        return CHAIN_MAP.get(int(cid))
+    except Exception:
+        return None
 
 # -------------------------
 # Helpers
@@ -93,30 +124,6 @@ def to_bool(x):
     if x in ("false","False","0",0): return False
     return None
 
-def fetch_chain_map():
-    mapping = {}
-    try:
-        r = requests.get(CHAINS_JSON_URL, timeout=60)
-        r.raise_for_status()
-        data = r.json()
-        for item in data:
-            cid = item.get("chainId")
-            name = item.get("name")
-            if isinstance(cid, int) and name:
-                mapping[cid] = name
-    except Exception as e:
-        print(f"⚠️ Could not fetch chains.json: {e}. Proceeding with minimal map.")
-    # add Solana (used by Relay as 792703809)
-    mapping.setdefault(792703809, "Solana")
-    return mapping
-
-CHAIN_MAP = fetch_chain_map()
-
-def chain_name(cid):
-    if cid is None:
-        return None
-    return CHAIN_MAP.get(cid)
-
 def ensure_schema(df: pd.DataFrame) -> pd.DataFrame:
     """Enforce dtypes and column order exactly as in the table."""
     # Cast numerics
@@ -125,8 +132,6 @@ def ensure_schema(df: pd.DataFrame) -> pd.DataFrame:
         "fee_currency_chain_id","fee_currency_decimals",
         "in_chain_id","in_decimals",
         "out_chain_id","out_decimals",
-        "origin_input_chain","origin_output_chain",
-        "dest_input_chain","dest_output_chain",
     ]
     float_cols = [
         "fee_usd_gas","fee_usd_fixed","fee_usd_price","fee_usd_gateway",
@@ -146,7 +151,7 @@ def ensure_schema(df: pd.DataFrame) -> pd.DataFrame:
         if c in df.columns:
             df[c] = df[c].astype("boolean")
 
-    # Column order
+    # Column order (with in/out chain names; origin/dest chain-name cols removed)
     cols = [
         "request_id","status","created_at","updated_at","user","recipient","referrer",
         "slippage_tolerance_bps","subsidized_request","uses_external_liquidity",
@@ -155,13 +160,21 @@ def ensure_schema(df: pd.DataFrame) -> pd.DataFrame:
         "fee_usd_gas","fee_usd_fixed","fee_usd_price","fee_usd_gateway",
         "fee_currency_chain_id","fee_currency_address","fee_currency_symbol","fee_currency_decimals",
         "quoted_price_out_atomic",
-        "in_chain_id","in_address","in_symbol","in_decimals","in_amount_atomic","in_amount_formatted","in_amount_usd","in_min_amount_atomic",
-        "out_chain_id","out_address","out_symbol","out_decimals","out_amount_atomic","out_amount_formatted","out_amount_usd","out_min_amount_atomic",
+
+        # in (with chain name)
+        "in_chain_id","in_chain_name","in_address","in_symbol","in_decimals",
+        "in_amount_atomic","in_amount_formatted","in_amount_usd","in_min_amount_atomic",
+
+        # out (with chain name)
+        "out_chain_id","out_chain_name","out_address","out_symbol","out_decimals",
+        "out_amount_atomic","out_amount_formatted","out_amount_usd","out_min_amount_atomic",
+
         "rate_out_per_in",
-        "origin_input_chain","origin_input_chain_name","origin_input_address",
-        "origin_output_chain","origin_output_chain_name","origin_output_address","origin_router",
-        "dest_input_chain","dest_input_chain_name","dest_input_address",
-        "dest_output_chain","dest_output_chain_name","dest_output_address","dest_router",
+
+        # keep router + route addresses (IDs not used for naming)
+        "origin_router","dest_router",
+        "origin_input_address","origin_output_address",
+        "dest_input_address","dest_output_address",
     ]
     df = df.reindex(columns=cols)
 
@@ -213,7 +226,9 @@ def create_table_if_needed():
 
         {"name":"quoted_price_out_atomic","type":"varchar","nullable":True},
 
+        # in (with chain name)
         {"name":"in_chain_id","type":"bigint","nullable":True},
+        {"name":"in_chain_name","type":"varchar","nullable":True},
         {"name":"in_address","type":"varchar","nullable":True},
         {"name":"in_symbol","type":"varchar","nullable":True},
         {"name":"in_decimals","type":"integer","nullable":True},
@@ -222,7 +237,9 @@ def create_table_if_needed():
         {"name":"in_amount_usd","type":"double","nullable":True},
         {"name":"in_min_amount_atomic","type":"varchar","nullable":True},
 
+        # out (with chain name)
         {"name":"out_chain_id","type":"bigint","nullable":True},
+        {"name":"out_chain_name","type":"varchar","nullable":True},
         {"name":"out_address","type":"varchar","nullable":True},
         {"name":"out_symbol","type":"varchar","nullable":True},
         {"name":"out_decimals","type":"integer","nullable":True},
@@ -233,27 +250,19 @@ def create_table_if_needed():
 
         {"name":"rate_out_per_in","type":"double","nullable":True},
 
-        {"name":"origin_input_chain","type":"bigint","nullable":True},
-        {"name":"origin_input_chain_name","type":"varchar","nullable":True},
-        {"name":"origin_input_address","type":"varchar","nullable":True},
-        {"name":"origin_output_chain","type":"bigint","nullable":True},
-        {"name":"origin_output_chain_name","type":"varchar","nullable":True},
-        {"name":"origin_output_address","type":"varchar","nullable":True},
+        # keep router + route addresses only
         {"name":"origin_router","type":"varchar","nullable":True},
-
-        {"name":"dest_input_chain","type":"bigint","nullable":True},
-        {"name":"dest_input_chain_name","type":"varchar","nullable":True},
-        {"name":"dest_input_address","type":"varchar","nullable":True},
-        {"name":"dest_output_chain","type":"bigint","nullable":True},
-        {"name":"dest_output_chain_name","type":"varchar","nullable":True},
-        {"name":"dest_output_address","type":"varchar","nullable":True},
         {"name":"dest_router","type":"varchar","nullable":True},
+        {"name":"origin_input_address","type":"varchar","nullable":True},
+        {"name":"origin_output_address","type":"varchar","nullable":True},
+        {"name":"dest_input_address","type":"varchar","nullable":True},
+        {"name":"dest_output_address","type":"varchar","nullable":True},
     ]
     payload = {
         "table_name": DUNE_TABLE,
         "namespace": DUNE_NAMESPACE,
         "is_private": False,
-        "description": "Relay requests flattened (daily loader) with chain names",
+        "description": "Relay requests flattened (daily loader) with hard-coded in/out chain names",
         "schema": schema,
     }
     resp = requests.post(DUNE_CREATE_URL, headers=JSON_HEADERS, json=payload, timeout=120)
@@ -331,10 +340,9 @@ def main():
         out_curr = cur_out.get("currency") or {}
         fee_curr = sget(data, ["feeCurrencyObject"]) or {}
 
-        o_in_chain  = to_int(sget(meta, ["route","origin","inputCurrency","currency","chainId"]))
-        o_out_chain = to_int(sget(meta, ["route","origin","outputCurrency","currency","chainId"]))
-        d_in_chain  = to_int(sget(meta, ["route","destination","inputCurrency","currency","chainId"]))
-        d_out_chain = to_int(sget(meta, ["route","destination","outputCurrency","currency","chainId"]))
+        # build in/out chain names from hard-coded map
+        in_cid  = to_int(in_curr.get("chainId"))
+        out_cid = to_int(out_curr.get("chainId"))
 
         rows.append({
             "request_id": rid,
@@ -350,7 +358,7 @@ def main():
             "uses_external_liquidity": to_bool(sget(data, ["usesExternalLiquidity"])),
             "time_estimate_min": to_int(sget(data, ["timeEstimate"])),
             "fail_reason": sget(data, ["failReason"]),
-            "refund_fail_reason": sget(data, ["refundFailReason"])),
+            "refund_fail_reason": sget(data, ["refundFailReason"]),
 
             "fee_gas": sget(data, ["fees","gas"]),
             "fee_fixed": sget(data, ["fees","fixed"]),
@@ -369,7 +377,9 @@ def main():
 
             "quoted_price_out_atomic": sget(data, ["price"]),
 
-            "in_chain_id": to_int(in_curr.get("chainId")),
+            # in (with chain name)
+            "in_chain_id": in_cid,
+            "in_chain_name": chain_name(in_cid),
             "in_address": in_curr.get("address"),
             "in_symbol": in_curr.get("symbol"),
             "in_decimals": to_int(in_curr.get("decimals")),
@@ -378,7 +388,9 @@ def main():
             "in_amount_usd": to_float(cur_in.get("amountUsd")),
             "in_min_amount_atomic": cur_in.get("minimumAmount"),
 
-            "out_chain_id": to_int(out_curr.get("chainId")),
+            # out (with chain name)
+            "out_chain_id": out_cid,
+            "out_chain_name": chain_name(out_cid),
             "out_address": out_curr.get("address"),
             "out_symbol": out_curr.get("symbol"),
             "out_decimals": to_int(out_curr.get("decimals")),
@@ -389,23 +401,13 @@ def main():
 
             "rate_out_per_in": to_float(sget(meta, ["rate"])),
 
-            "origin_input_chain": o_in_chain,
-            "origin_input_chain_name": chain_name(o_in_chain),
-            "origin_input_address": sget(meta, ["route","origin","inputCurrency","currency","address"]),
-
-            "origin_output_chain": o_out_chain,
-            "origin_output_chain_name": chain_name(o_out_chain),
-            "origin_output_address": sget(meta, ["route","origin","outputCurrency","currency","address"]),
+            # keep router + route addresses for lineage
             "origin_router": sget(meta, ["route","origin","router"]),
-
-            "dest_input_chain": d_in_chain,
-            "dest_input_chain_name": chain_name(d_in_chain),
+            "dest_router":   sget(meta, ["route","destination","router"]),
+            "origin_input_address": sget(meta, ["route","origin","inputCurrency","currency","address"]),
+            "origin_output_address": sget(meta, ["route","origin","outputCurrency","currency","address"]),
             "dest_input_address": sget(meta, ["route","destination","inputCurrency","currency","address"]),
-
-            "dest_output_chain": d_out_chain,
-            "dest_output_chain_name": chain_name(d_out_chain),
             "dest_output_address": sget(meta, ["route","destination","outputCurrency","currency","address"]),
-            "dest_router": sget(meta, ["route","destination","router"]),
         })
 
     df = pd.DataFrame(rows)
