@@ -1,0 +1,54 @@
+name: Relay → Dune (daily, yesterday EU/Amsterdam)
+
+on:
+  schedule:
+    # Run 06:00 UTC daily = 07:00 CET (Amsterdam)
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Local date (Europe/Amsterdam) to load, YYYY-MM-DD (optional)"
+        required: false
+        type: string
+
+jobs:
+  load-relay-requests:
+    runs-on: ubuntu-latest
+    env:
+      REFERRER: zkp2p.xyz
+      DUNE_NAMESPACE: unhappyben
+      DUNE_TABLE: relay_requests
+      # Set this in repo settings → Secrets and variables → Actions (Repository secret)
+      DUNE_API_KEY: ${{ secrets.DUNE_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas python-dateutil requests
+
+      - name: Run loader (yesterday by default)
+        run: |
+          if [ -z "${{ github.event.inputs.date }}" ]; then
+            echo "No date provided; running for 'yesterday' in Europe/Amsterdam."
+            python load_relay_requests_daily.py
+          else
+            echo "Running for explicit date: ${{ github.event.inputs.date }}"
+            python load_relay_requests_daily.py --date "${{ github.event.inputs.date }}"
+          fi
+
+      - name: Upload CSV artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay_requests_csv
+          path: |
+            relay_requests_*.csv
+          if-no-files-found: ignore
