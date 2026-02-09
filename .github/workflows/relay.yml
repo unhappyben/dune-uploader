@@ -14,8 +14,11 @@ on:
 jobs:
   load-relay-requests:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        referrer: [zkp2p.xyz, zkp2p_mobile]
     env:
-      REFERRER: zkp2p.xyz
+      REFERRER: ${{ matrix.referrer }}
       DUNE_NAMESPACE: unhappyben
       DUNE_TABLE: relay_requests
       # Set this in repo settings → Secrets and variables → Actions (Repository secret)
@@ -48,7 +51,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: relay_requests_csv
+          name: relay_requests_csv_${{ matrix.referrer }}
           path: |
             relay_requests_*.csv
           if-no-files-found: ignore

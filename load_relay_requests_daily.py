@@ -15,6 +15,7 @@ Env:
 
 CLI:
   --date YYYY-MM-DD  # Europe/Amsterdam local date to load (default: yesterday)
+  --backfill          # Skip date filter; upload ALL fetched data in one shot
 """
 
 import os
@@ -70,6 +71,16 @@ CHAIN_MAP = {
     8453:       "Base Mainnet",
     100:        "Gnosis Chain (xDai)",
     747:        "Flow EVM Mainnet",
+    143:        "Monad Mainnet",
+    10143:      "Monad Testnet",
+    59144:      "Linea Mainnet",
+    324:        "zkSync Era Mainnet",
+    10:         "Optimism Mainnet",
+    250:        "Fantom Opera",
+    1101:       "Polygon zkEVM",
+    81457:      "Blast Mainnet",
+    34443:      "Mode Mainnet",
+    7777777:    "Zora Mainnet",
 }
 
 def chain_name(cid):
@@ -300,10 +311,14 @@ def compute_local_day_window_eu_amsterdam(target_date_str: str | None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", help="Local date (Europe/Amsterdam) to load, YYYY-MM-DD. Defaults to yesterday.", default=None)
+    parser.add_argument("--backfill", action="store_true", help="Skip date filter; upload ALL fetched data in one shot.")
     args = parser.parse_args()
 
-    day_str, start_utc, end_utc = compute_local_day_window_eu_amsterdam(args.date)
-    print(f"Loading date (Europe/Amsterdam): {day_str}  UTC window: {start_utc.isoformat()} .. {end_utc.isoformat()}")
+    if args.backfill:
+        print(f"Backfill mode: will upload ALL fetched data for referrer={REFERRER}")
+    else:
+        day_str, start_utc, end_utc = compute_local_day_window_eu_amsterdam(args.date)
+        print(f"Loading date (Europe/Amsterdam): {day_str}  UTC window: {start_utc.isoformat()} .. {end_utc.isoformat()}")
 
     # 1) Fetch all Relay requests (paginate)
     all_requests, continuation, seen = [], None, set()
@@ -415,21 +430,26 @@ def main():
     # Normalize + ensure schema
     df = ensure_schema(df)
 
-    # Create helper timestamp (UTC) for filtering
-    df["_created_at_ts"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
+    if args.backfill:
+        df_out = df
+        csv_path = f"relay_requests_backfill_{REFERRER}.csv"
+        print(f"Backfill rows: {len(df_out)}")
+    else:
+        # Create helper timestamp (UTC) for filtering
+        df["_created_at_ts"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
 
-    # Filter to Europe/Amsterdam "day" window (in UTC)
-    mask = (df["_created_at_ts"] >= pd.to_datetime(start_utc)) & (df["_created_at_ts"] <= pd.to_datetime(end_utc))
-    df_day = df.loc[mask].drop(columns=["_created_at_ts"]).copy()
+        # Filter to Europe/Amsterdam "day" window (in UTC)
+        mask = (df["_created_at_ts"] >= pd.to_datetime(start_utc)) & (df["_created_at_ts"] <= pd.to_datetime(end_utc))
+        df_out = df.loc[mask].drop(columns=["_created_at_ts"]).copy()
+        csv_path = f"relay_requests_{day_str}.csv"
+        print(f"Rows for {day_str}: {len(df_out)}")
 
-    print(f"Rows for {day_str}: {len(df_day)}")
-    if len(df_day) == 0:
-        print("No rows to upload for this date. Exiting cleanly.")
+    if len(df_out) == 0:
+        print("No rows to upload. Exiting cleanly.")
         return
 
     # Write CSV
-    csv_path = f"relay_requests_{day_str}.csv"
-    df_day.to_csv(csv_path, index=False, na_rep="")
+    df_out.to_csv(csv_path, index=False, na_rep="")
     print(f"CSV written: {csv_path}")
 
     # Ensure table exists, then insert
