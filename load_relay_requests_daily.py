@@ -8,7 +8,7 @@ Daily Relay → Dune loader (relay_requests ONLY, hard-coded chain names)
 - Inserts CSV into Dune table via CSV endpoint
 
 Env:
-  REFERRER        (default: zkp2p.xyz)
+  REFERRER        (default: peer.xyz)
   DUNE_API_KEY    (required in CI)
   DUNE_NAMESPACE  (default: unhappyben)
   DUNE_TABLE      (default: relay_requests)
@@ -33,7 +33,7 @@ from dateutil import parser as dtp
 # -------------------------
 # Config (env + defaults)
 # -------------------------
-REFERRER = os.getenv("REFERRER", "zkp2p.xyz")
+REFERRER = os.getenv("REFERRER", "peer.xyz")
 BASE_URL = "https://api.relay.link/requests/v2"
 PAGE_LIMIT = 50
 SLEEP_BETWEEN = 0.25
