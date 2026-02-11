@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        referrer: [zkp2p.xyz, zkp2p_mobile]
+        referrer: [peer.xyz, zkp2p_mobile]
     env:
       REFERRER: ${{ matrix.referrer }}
       DUNE_NAMESPACE: unhappyben
